@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable, Dict, Any, List
+from typing import Callable, Dict, Any
 
 import requests
 
 from config import TELEGRAM_BOT_TOKEN, SYMBOLS, EXCHANGE
 from logger_setup import get_logger
 from telegram_bot import send_message
-from paper_trader import _load as load_trades, daily_summary
+from paper_trader import _load as load_trades, daily_summary, performance_window
+from risk_manager import get_risk_manager, in_quiet_hours
 
 log = get_logger("commands")
 
@@ -57,9 +58,12 @@ def _cmd_help() -> str:
     return (
         "<b>Commands</b>\n"
         "/status — HTF bias + last loop time + open trades\n"
-        "/summary — paper-trade P&L summary\n"
+        "/summary — paper-trade P&amp;L summary (all-time)\n"
         "/zones — active supply/demand zones per symbol\n"
         "/last — most recent signal per symbol\n"
+        "/pnl — today's P&amp;L, equity, halt status\n"
+        "/performance — win rate (7d / 30d / all-time)\n"
+        "/resume — clear all halts and pair blocks\n"
         "/help — this message"
     )
 
@@ -68,10 +72,14 @@ def _cmd_status() -> str:
     snap = _snapshot()
     trades = load_trades()
     open_trades = [t for t in trades if t["status"] == "open"]
+    rs = get_risk_manager().status_dict()
 
     lines = ["<b>📡 Bot status</b>"]
     lines.append(f"Exchange: {EXCHANGE}")
     lines.append(f"Last loop: {snap['last_loop_at'] or 'pending'}")
+    lines.append(f"Quiet hours: {'YES' if in_quiet_hours() else 'no'}")
+    halt_emoji = "🛑" if rs["halt_signals"] else "🟢"
+    lines.append(f"{halt_emoji} Halt: {rs['halt_reason'] or 'no'}")
     lines.append("")
     lines.append("<b>HTF bias</b>")
     for s in SYMBOLS:
@@ -118,11 +126,56 @@ def _cmd_last() -> str:
         return "No signals yet. Strict pipeline waiting for setups."
     lines = ["<b>🎯 Last signal per symbol</b>"]
     for s, sig in snap["last_signal"].items():
+        score_max = sig.get("score_max", 15)
         lines.append(
-            f"• {s} {sig['direction'].upper()} score {sig['score']}/13 "
+            f"• {s} {sig['direction'].upper()} score {sig['score']}/{score_max} "
             f"@ {sig['entry']:.4f} ({sig['timestamp']})"
         )
     return "\n".join(lines)
+
+
+def _cmd_pnl() -> str:
+    rs = get_risk_manager().status_dict()
+    trades = load_trades()
+    open_n = sum(1 for t in trades if t.get("status") == "open")
+    halt = "🛑 HALTED" if rs["halt_signals"] else "🟢 active"
+    lines = [
+        "<b>💰 P&amp;L</b>",
+        f"Status: {halt}" + (f" ({rs['halt_reason']})" if rs["halt_reason"] else ""),
+        f"Today P&amp;L: {rs['daily_pnl_usd']:+.2f} USDT",
+        f"Lifetime P&amp;L: {rs['lifetime_realised_pnl_usd']:+.2f} USDT",
+        f"Equity: {rs['running_equity']:.2f} USDT",
+        f"Consecutive losses: {rs['consecutive_losses']}",
+        f"Open trades: {open_n}",
+    ]
+    blocks = rs.get("pair_blocks") or {}
+    cooldowns = rs.get("pair_cooldowns") or {}
+    if blocks:
+        lines.append("Blocked pairs: " + ", ".join(f"{k} until {v}" for k, v in blocks.items()))
+    if cooldowns:
+        lines.append("Cooldowns (50%): " + ", ".join(f"{k} until {v}" for k, v in cooldowns.items()))
+    return "\n".join(lines)
+
+
+def _cmd_performance() -> str:
+    p7 = performance_window(7 * 24)
+    p30 = performance_window(30 * 24)
+    pall = performance_window(10 * 365 * 24)
+    lines = [
+        "<b>🏆 Performance</b>",
+        f"7d:  {p7['trades']:>3} trades | win {p7['win_rate']:.1f}% | "
+        f"P&amp;L {p7['pnl_pct']:+.2f}% ({p7['pnl_usd']:+.2f} USDT)",
+        f"30d: {p30['trades']:>3} trades | win {p30['win_rate']:.1f}% | "
+        f"P&amp;L {p30['pnl_pct']:+.2f}% ({p30['pnl_usd']:+.2f} USDT)",
+        f"All: {pall['trades']:>3} trades | win {pall['win_rate']:.1f}% | "
+        f"P&amp;L {pall['pnl_pct']:+.2f}% ({pall['pnl_usd']:+.2f} USDT)",
+    ]
+    return "\n".join(lines)
+
+
+def _cmd_resume() -> str:
+    msg = get_risk_manager().clear_halts()
+    return "✅ " + msg
 
 
 HANDLERS: Dict[str, Callable[[], str]] = {
@@ -132,6 +185,9 @@ HANDLERS: Dict[str, Callable[[], str]] = {
     "/summary": _cmd_summary,
     "/zones": _cmd_zones,
     "/last": _cmd_last,
+    "/pnl": _cmd_pnl,
+    "/performance": _cmd_performance,
+    "/resume": _cmd_resume,
 }
 
 
@@ -177,6 +233,7 @@ def _poll_loop() -> None:
     except Exception as e:  # noqa: BLE001
         log.warning("Initial getUpdates drain failed: %s", e)
 
+    conflict_count = 0
     while True:
         try:
             r = requests.get(
@@ -184,11 +241,22 @@ def _poll_loop() -> None:
                 params={"timeout": 25, "offset": offset, "allowed_updates": "message"},
                 timeout=35,
             )
+            if r.status_code == 409:
+                conflict_count += 1
+                if conflict_count <= 3 or conflict_count % 30 == 0:
+                    log.warning(
+                        "Telegram 409 Conflict — another bot instance may be polling. "
+                        "Continuing without command polling."
+                    )
+                # Back off harder; we keep send_message working but stop fighting.
+                time.sleep(60)
+                continue
             data = r.json()
             if not data.get("ok"):
                 log.warning("getUpdates not ok: %s", data)
                 time.sleep(5)
                 continue
+            conflict_count = 0
             for upd in data.get("result", []):
                 offset = upd["update_id"] + 1
                 _process_update(upd)

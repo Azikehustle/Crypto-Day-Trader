@@ -5,6 +5,8 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "ccxt>=4.5.51",
+    "matplotlib>=3.8.0",
+    "mplfinance>=0.12.10b0",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
     "python-dotenv>=1.2.2",

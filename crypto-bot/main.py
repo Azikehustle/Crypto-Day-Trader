@@ -1,4 +1,12 @@
-"""Main loop: orchestrate the full bot pipeline."""
+"""Main loop: orchestrate the full bot pipeline.
+
+Adds: risk-manager gating, heartbeat pings, crash alerts, file lock to prevent
+duplicate instances, and dynamic SL/volume/ATR-aware signal pipeline.
+"""
+from __future__ import annotations
+
+import os
+import sys
 import time
 import traceback
 from datetime import datetime, timezone, timedelta
@@ -14,20 +22,32 @@ from config import (
     LOOP_SLEEP_SECONDS,
     SCORE_THRESHOLD_SEND,
     SCORE_THRESHOLD_LOG,
+    SCORE_MAX,
     ZONE_PROXIMITY_PCT,
+    HEARTBEAT_INTERVAL_HOURS,
+    LOCK_FILE,
+    LOCK_STALE_SECONDS,
 )
 from logger_setup import get_logger
 from data_fetcher import fetch_ohlcv, htf_bias
 from zone_detector import detect_zones, filter_active_zones
 from signal_engine import evaluate_zone, should_send
-from telegram_bot import send_message, send_signal, format_signal
-from paper_trader import open_trade, update_trades_with_price, daily_summary
+from telegram_bot import (
+    send_message,
+    send_signal,
+    send_heartbeat,
+    send_crash_alert,
+    send_risk_alert,
+)
+from paper_trader import open_trade, update_trades_with_price, daily_summary, open_trades_count
 from command_handler import (
     start_in_background as start_command_listener,
     update_state,
     update_symbol_state,
 )
 from github_sync import start_in_background as start_github_sync
+from risk_manager import get_risk_manager
+from chart_renderer import render_signal_chart
 
 log = get_logger("main")
 
@@ -36,6 +56,53 @@ _htf_cache: Dict[str, dict] = {}
 _last_signal_ts: Dict[str, str] = {}
 _last_summary_day: Dict[str, str] = {"day": ""}
 
+# Heartbeat / counters
+_loop_count: int = 0
+_signals_today: int = 0
+_signals_today_date: str = ""
+_last_heartbeat: datetime = datetime.now(timezone.utc) - timedelta(hours=HEARTBEAT_INTERVAL_HOURS)
+
+
+# ---------------------------------------------------------------------------
+# File lock
+# ---------------------------------------------------------------------------
+
+def _acquire_lock() -> bool:
+    """Returns True if we hold the lock, False if another fresh instance does."""
+    try:
+        if os.path.exists(LOCK_FILE):
+            try:
+                age = time.time() - os.path.getmtime(LOCK_FILE)
+            except OSError:
+                age = LOCK_STALE_SECONDS + 1
+            if age < LOCK_STALE_SECONDS:
+                with open(LOCK_FILE) as f:
+                    other = f.read().strip()
+                if other and other != str(os.getpid()):
+                    log.warning(
+                        "Another instance holds %s (pid=%s, age=%.0fs). Backing off.",
+                        LOCK_FILE, other, age,
+                    )
+                    return False
+        _refresh_lock()
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("Lock check failed (%s) — proceeding without lock", e)
+        return True
+
+
+def _refresh_lock() -> None:
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+        os.utime(LOCK_FILE, None)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Failed to refresh lock: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# HTF bias caching
+# ---------------------------------------------------------------------------
 
 def get_htf_bias_cached(symbol: str) -> str:
     rec = _htf_cache.get(symbol)
@@ -53,6 +120,19 @@ def get_htf_bias_cached(symbol: str) -> str:
     return bias
 
 
+# ---------------------------------------------------------------------------
+# Per-symbol processing
+# ---------------------------------------------------------------------------
+
+def _bump_signal_counter() -> None:
+    global _signals_today, _signals_today_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if today != _signals_today_date:
+        _signals_today = 0
+        _signals_today_date = today
+    _signals_today += 1
+
+
 def process_symbol(symbol: str) -> None:
     bias = get_htf_bias_cached(symbol)
     df = fetch_ohlcv(symbol, timeframe=ENTRY_TIMEFRAME, limit=300, exchange_name=EXCHANGE)
@@ -63,14 +143,21 @@ def process_symbol(symbol: str) -> None:
     last_low = float(df["low"].iloc[-1])
     last_close = float(df["close"].iloc[-1])
 
-    # Manage open paper trades first
+    # --- Manage open paper trades first ---
+    rm = get_risk_manager()
     closed = update_trades_with_price(symbol, last_high, last_low)
     for c in closed:
         emoji = "✅" if c["result"] == "win" else "❌"
         send_message(
             f"{emoji} <b>Closed {c['symbol']} {c['direction'].upper()}</b>\n"
-            f"Exit: {c['exit_price']:.4f} | P&L: {c['pnl_pct']:+.2f}%"
+            f"Exit: {c['exit_price']:.4f} | "
+            f"P&L: {c['pnl_pct']:+.2f}% ({(c.get('pnl_usd') or 0.0):+.2f} USDT)"
         )
+        events = rm.register_trade_close(
+            c["symbol"], float(c.get("pnl_usd") or 0.0), c["result"]
+        )
+        for ev in events:
+            send_risk_alert(ev)
 
     if bias == "flat":
         update_symbol_state(symbol, active_zones=[])
@@ -90,6 +177,8 @@ def process_symbol(symbol: str) -> None:
         {"kind": z.kind, "high": z.high, "low": z.low} for z in nearby[-5:]
     ])
 
+    open_n = open_trades_count()
+
     for zone in nearby[-10:]:  # cap work
         try:
             sig = evaluate_zone(symbol, df, zone, bias)
@@ -105,16 +194,52 @@ def process_symbol(symbol: str) -> None:
 
         signal_dict = sig.to_dict()
         update_symbol_state(symbol, last_signal=signal_dict)
-        if should_send(sig):
-            log.info("SIGNAL %s score=%d", symbol, sig.score)
-            send_signal(signal_dict)
-            open_trade(signal_dict)
-        elif sig.score >= SCORE_THRESHOLD_LOG:
+
+        if not should_send(sig):
+            if sig.score >= SCORE_THRESHOLD_LOG:
+                log.info(
+                    "Partial setup %s score=%d/%d (no alert)",
+                    symbol, sig.score, SCORE_MAX,
+                )
+            _last_signal_ts[symbol] = sig_id
+            continue
+
+        # Risk manager gate (halt, max open, quiet hours, blocked pair)
+        blocked, reason = rm.should_block_signal(symbol, open_n)
+        if blocked:
             log.info(
-                "Partial setup %s score=%d (no alert)", symbol, sig.score
+                "Skip signal %s %s (score %d/%d): %s",
+                symbol, sig.direction, sig.score, SCORE_MAX, reason,
             )
+            _last_signal_ts[symbol] = sig_id
+            continue
+
+        # Pair weight (1.0, 0.5 for cooldown)
+        weight = rm.get_pair_weight(symbol)
+        if weight <= 0:
+            _last_signal_ts[symbol] = sig_id
+            continue
+
+        log.info(
+            "SIGNAL %s %s score=%d/%d weight=%.2f",
+            symbol, sig.direction, sig.score, SCORE_MAX, weight,
+        )
+        # Render chart, then send (chart is best-effort)
+        chart_path = None
+        try:
+            chart_path = render_signal_chart(df, signal_dict)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Chart render failed: %s", e)
+        send_signal(signal_dict, chart_path=chart_path)
+        if open_trade(signal_dict, pair_weight=weight):
+            open_n += 1
+            _bump_signal_counter()
         _last_signal_ts[symbol] = sig_id
 
+
+# ---------------------------------------------------------------------------
+# Daily summary + heartbeat
+# ---------------------------------------------------------------------------
 
 def maybe_send_daily_summary() -> None:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -124,8 +249,40 @@ def maybe_send_daily_summary() -> None:
         _last_summary_day["day"] = today
 
 
+def maybe_send_heartbeat() -> None:
+    global _last_heartbeat
+    now = datetime.now(timezone.utc)
+    if now - _last_heartbeat < timedelta(hours=HEARTBEAT_INTERVAL_HOURS):
+        return
+    rs = get_risk_manager().status_dict()
+    state = {
+        "loop_count": _loop_count,
+        "signals_today": _signals_today,
+        "open_trades": open_trades_count(),
+        "exchange": EXCHANGE,
+        "daily_pnl_usd": rs["daily_pnl_usd"],
+        "running_equity": rs["running_equity"],
+    }
+    if send_heartbeat(state):
+        _last_heartbeat = now
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
 def run_forever() -> None:
+    global _loop_count
     log.info("Starting bot. Exchange=%s Symbols=%s", EXCHANGE, ", ".join(SYMBOLS))
+
+    if not _acquire_lock():
+        log.error("Refusing to start: another instance appears active.")
+        sys.exit(0)
+
+    # Warm-start risk manager (loads state, runs daily reset / auto-resume)
+    rm = get_risk_manager()
+    rm.tick()
+
     start_command_listener()
     start_github_sync()
     send_message(
@@ -133,18 +290,41 @@ def run_forever() -> None:
         f"Exchange: {EXCHANGE}\n"
         f"Symbols: {', '.join(SYMBOLS)}\n"
         f"HTF: {HTF_TIMEFRAME} | Entry: {ENTRY_TIMEFRAME}\n"
-        f"Score threshold: {SCORE_THRESHOLD_SEND}/13\n"
+        f"Score threshold: {SCORE_THRESHOLD_SEND}/{SCORE_MAX}\n"
         "Send /help to see commands."
     )
+
     while True:
+        if not _acquire_lock():
+            log.warning("Lock contention; skipping this loop iteration.")
+            time.sleep(LOOP_SLEEP_SECONDS)
+            continue
+        _refresh_lock()
+        _loop_count += 1
+        rm.tick()
+
         for symbol in SYMBOLS:
             try:
                 process_symbol(symbol)
             except Exception as e:  # noqa: BLE001
-                log.error("process_symbol %s error: %s\n%s", symbol, e, traceback.format_exc())
+                log.error(
+                    "process_symbol %s error: %s\n%s",
+                    symbol, e, traceback.format_exc(),
+                )
         update_state(last_loop_at=datetime.now(timezone.utc).isoformat())
         maybe_send_daily_summary()
+        maybe_send_heartbeat()
         time.sleep(LOOP_SLEEP_SECONDS)
+
+
+def _release_lock() -> None:
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE) as f:
+                if f.read().strip() == str(os.getpid()):
+                    os.remove(LOCK_FILE)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 if __name__ == "__main__":
@@ -152,3 +332,15 @@ if __name__ == "__main__":
         run_forever()
     except KeyboardInterrupt:
         log.info("Shutting down on KeyboardInterrupt.")
+        _release_lock()
+    except SystemExit:
+        raise
+    except Exception as e:  # noqa: BLE001
+        tb = traceback.format_exc()
+        log.error("FATAL: uncaught exception: %s\n%s", e, tb)
+        try:
+            send_crash_alert(f"{type(e).__name__}: {e}")
+        except Exception:  # noqa: BLE001
+            pass
+        _release_lock()
+        sys.exit(1)
