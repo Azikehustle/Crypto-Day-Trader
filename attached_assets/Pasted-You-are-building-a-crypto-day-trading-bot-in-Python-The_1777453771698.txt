@@ -1,0 +1,122 @@
+You are building a crypto day trading bot in Python. The bot uses free tools only. It implements a high-probability price action strategy combining supply/demand zones, liquidity sweeps, market structure shifts, displacement, and candle confirmation. 
+
+The output is a signal-based system that sends trades to Telegram. No automated execution initially — paper trade first, then optional live execution later via exchange API.
+
+### Strategy Specification
+
+**Core Setup Flow (Strict Order)**  
+HTF Bias → Identify Supply/Demand Zone → Liquidity Sweep → Market Structure Shift (MSS) → Displacement → Confirmation Candle → Entry → Liquidity Target Take-Profit
+
+**Definitions**  
+- **HTF Bias**: Use the 4-hour chart for overall trend direction. Price above 200 EMA → bullish bias (only longs in demand zones). Price below 200 EMA → bearish bias (only shorts in supply zones). Flat/choppy → no trades.  
+- **Supply Zone (Resistance)**: The origin of a sharp drop. A consolidation before a bearish impulse. Mark the zone high/low.  
+- **Demand Zone (Support)**: The origin of a sharp rally. Mark the zone high/low.  
+- **Liquidity Sweep**: Price temporarily breaks beyond the zone to take out stops/induce traders. For longs: price wicks below the demand zone low, then quickly reclaims back inside. For shorts: price wicks above the supply zone high, then quickly reclaims back inside.  
+- **Market Structure Shift (MSS)**: Confirms that the sweep caused a directional change.  
+  - *Long MSS*: After sweeping below demand and reclaiming, price breaks above the most recent minor lower high (the last swing high before the sweep). This break signals bullish MSS.  
+  - *Short MSS*: After sweeping above supply and reclaiming, price breaks below the most recent minor higher low (the last swing low before the sweep). This break signals bearish MSS.  
+  No MSS = no trade, regardless of other conditions.  
+- **Displacement**: The reclaim candle after the sweep must show strong intent. Its body size must be at least 1.2x the average candle body of the last 20 candles on the entry timeframe. If displacement is weak, skip setup.  
+- **Confirmation Candle**: The candle that triggers MSS (the break of the minor high/low) must close strongly beyond the level. A wick break is not enough; the close matters. Additionally, it should be a bullish engulfing/pin bar (for longs) or bearish engulfing/pin bar (for shorts).  
+- **Entry**: On the next candle open after confirmation close.  
+- **Stop Loss**: Place just below the demand zone low (for longs) or above the supply zone high (for shorts), with a small buffer (0.05-0.1% depending on volatility).  
+- **Take Profit (Liquidity Targets)**: Instead of a fixed RR, the bot scans for the nearest untouched liquidity pool in the direction of the trade:  
+  - Equal highs (for longs) / equal lows (for shorts)  
+  - Prior swing high / swing low  
+  - Major untapped liquidity level  
+  The nearest such level within a reasonable range (e.g., 1.5-3x risk) becomes TP. If none found, default to 2:1 RR as fallback.
+
+**Additional Filters**  
+- **Premium/Discount**: Compute the range from the zone's origin swing high to swing low. Longs only allowed if entry is in the lower half (discount) of that range. Shorts only allowed if entry is in the upper half (premium).  
+- **Session Filter**: Prioritize setups during high-activity sessions: London Open (07:00-09:00 UTC), New York Open (12:00-14:00 UTC), and the overlap (12:00-14:00 UTC). Setups outside these windows are scored lower.  
+- **Scoring Model**: Assign a confidence score. Only high-confidence (8+) signals are sent.  
+  - Zone hit: 1 point  
+  - Liquidity sweep: 2 points  
+  - MSS confirmed: 3 points  
+  - Displacement strong (≥1.2x avg): 2 points  
+  - Confirmation candle pattern: 1 point  
+  - HTF alignment: 2 points  
+  - Inside premium/discount: 1 point  
+  - High-activity session: 1 point (bonus)  
+  Total possible ~13. Final threshold: 8+ → send signal, 6-7 → log but no alert, <6 → ignore.
+
+### Technical Architecture (Free Tools Only)
+
+**Data Sources**  
+- Use CCXT library to fetch live and historical OHLCV data from free exchange APIs (Binance, Bybit, KuCoin — no paid keys needed for market data).  
+- For backtesting, use CCXT or download historical data from Binance public endpoints.
+
+**Timeframes**  
+- HTF: 4h (for bias and zone identification)  
+- Entry timeframe: 15-minute (primary) — all MSS, displacement, and confirmation logic runs here.  
+- Optional: 1h for additional zone confirmation.
+
+**Zone Detection Algorithm**  
+- Detect swing points using a simple algorithm: look for pivot highs/lows over a window (e.g., 5 candles left/right). Use the origin of strong moves as zones.  
+- Supply zone: the highest candle before a sharp drop (e.g., a pivot high followed by a large bearish candle).  
+- Demand zone: the lowest candle before a sharp rally (pivot low followed by large bullish candle).  
+- Store zones as tuples (start_price, end_price, type) and track them until price visits/sweeps them.
+
+**MSS Detection**  
+- On the 15m chart, continuously track minor swing highs and lows since the zone was formed.  
+- For long setup: after sweep and reclaim, check if price breaks above the last minor lower high (identified as a pivot high that formed after the downward move).  
+- For short: break below the last minor higher low.
+
+**Displacement Calculation**  
+- Average body = average of absolute(close - open) over last 20 candles on 15m.  
+- Reclaim candle body > 1.2 * average.
+
+**Liquidity Target Finder**  
+- Scan price history for untouched levels where price previously found resistance/support (equal highs/lows). Use a tolerance of ~0.2%.  
+- Identify preceding swing high/low.  
+- Pick the nearest one in the trade direction that is beyond the entry point.
+
+**Backtesting Module**  
+- Historical data fetched via CCXT, walk-forward testing.  
+- Simulate each step of the logic (zone detection, sweep, MSS, displacement, confirmation) and record trades.  
+- Output metrics: win rate, average RR, profit factor, max drawdown, number of signals.
+
+**Bot Execution Flow**  
+- The bot runs a loop on the 15m timeframe (await each 15m candle close).  
+- On each new candle:  
+  1. Update HTF bias from 4h chart (check EMA).  
+  2. Detect new supply/demand zones and add to active zone list. Remove zones that have been swept and invalidated.  
+  3. For each active zone, check if price is approaching (within a certain distance, e.g., 0.5% for crypto). If so, monitor for sweep.  
+  4. On sweep (price wicks beyond zone then closes back inside), start tracking MSS and displacement.  
+  5. If MSS triggers and displacement valid, check premium/discount and session, compute score.  
+  6. If score ≥ 8, generate signal: entry price, stop loss, take profit, pair, timestamp.  
+  7. Send signal to Telegram via a bot (python-telegram-bot library).  
+  8. Paper trade: log the signal with a simulated entry and track P&L in a JSON/CSV file. Later, when live, integrate with exchange API for actual orders (Binance testnet or real).
+
+**Hosting**  
+- Develop on Replit with Python. Push to GitHub.  
+- Deploy for free on a platform like Render (cron job/service) or PythonAnywhere (scheduled tasks) that can run the script 24/7.  
+- Use environment variables for API keys (Telegram, exchange) and store sensitive data securely.
+
+**Telegram Integration**  
+- Create a Telegram bot via BotFather.  
+- Format signals clean:  
+  📊 Signal: BTC/USDT Long  
+  Entry: 68150  
+  SL: 67800  
+  TP: 69200 (Liquidity target: prior swing high)  
+  Confidence: 9/13 (High)  
+  Timeframe: 15m | HTF: Bullish  
+
+**Logging & Monitoring**  
+- Log all events (zone creation, sweeps, MSS, signals, errors) to a file for debugging.  
+- Optional: daily summary of paper trade performance via Telegram.
+
+### Deliverables
+
+Provide the complete Python project structure with separate modules:
+- `data_fetcher.py` (CCXT market data, EMA calculation)
+- `zone_detector.py` (swing points, supply/demand zone logic)
+- `signal_engine.py` (sweep, MSS, displacement, scoring)
+- `telegram_bot.py` (sending messages)
+- `paper_trader.py` (trade journal and P&L tracking)
+- `main.py` (the loop orchestrating everything)
+
+Code must be well-commented, include error handling, and be optimized for a free hosting environment (lightweight, minimal dependencies). Use only free, open-source libraries: ccxt, pandas, numpy, python-telegram-bot, requests.
+
+Now, generate the bot.
