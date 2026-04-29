@@ -27,6 +27,7 @@ from command_handler import (
     update_state,
     update_symbol_state,
 )
+from github_sync import start_in_background as start_github_sync
 
 log = get_logger("main")
 
@@ -126,6 +127,7 @@ def maybe_send_daily_summary() -> None:
 def run_forever() -> None:
     log.info("Starting bot. Exchange=%s Symbols=%s", EXCHANGE, ", ".join(SYMBOLS))
     start_command_listener()
+    start_github_sync()
     send_message(
         "🤖 <b>Crypto bot online</b>\n"
         f"Exchange: {EXCHANGE}\n"
