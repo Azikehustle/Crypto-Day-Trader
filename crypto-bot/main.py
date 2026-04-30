@@ -38,16 +38,19 @@ from telegram_bot import (
     send_heartbeat,
     send_crash_alert,
     send_risk_alert,
+    set_my_commands,
 )
 from paper_trader import open_trade, update_trades_with_price, daily_summary, open_trades_count
 from command_handler import (
     start_in_background as start_command_listener,
     update_state,
     update_symbol_state,
+    perform_restart,
 )
 from github_sync import start_in_background as start_github_sync
 from risk_manager import get_risk_manager
 from chart_renderer import render_signal_chart
+import runtime_settings
 from supabase_client import (
     is_connected as supabase_connected,
     ping as supabase_ping,
@@ -303,7 +306,6 @@ def maybe_send_heartbeat() -> None:
 
 def run_forever() -> None:
     global _loop_count
-    log.info("Starting bot. Exchange=%s Symbols=%s", EXCHANGE, ", ".join(SYMBOLS))
 
     if not _acquire_lock():
         log.error("Refusing to start: another instance appears active.")
@@ -319,20 +321,29 @@ def run_forever() -> None:
         )
         supabase_ok = False
 
+    # Hydrate runtime-mutable settings (symbols, max trades, risk %) from Supabase
+    runtime_settings.load()
+    active_symbols = runtime_settings.get_symbols()
+    log.info("Starting bot. Exchange=%s Symbols=%s", EXCHANGE, ", ".join(active_symbols))
+
     # Warm-start risk manager (loads state, runs daily reset / auto-resume)
     rm = get_risk_manager()
     rm.tick()
+
+    # Register the BotFather native commands menu so suggestions appear when
+    # users type "/" in Telegram.
+    set_my_commands()
 
     start_command_listener()
     start_github_sync()
     send_message(
         "🤖 <b>Crypto bot online</b>\n"
         f"Exchange: {EXCHANGE}\n"
-        f"Symbols: {', '.join(SYMBOLS)}\n"
+        f"Symbols: {', '.join(active_symbols)}\n"
         f"HTF: {HTF_TIMEFRAME} | Entry: {ENTRY_TIMEFRAME}\n"
         f"Score threshold: {SCORE_THRESHOLD_SEND}/{SCORE_MAX}\n"
         f"Supabase: {'✅' if supabase_ok else '❌'}\n"
-        "Send /help to see commands."
+        "Send /start to open the control menu."
     )
 
     # Best-effort prune of old (>7d) inactive zones on startup
@@ -345,6 +356,13 @@ def run_forever() -> None:
         log.warning("prune_old_zones failed: %s", e)
 
     while True:
+        # Honor a Telegram /restart request (in-place exec, screen survives)
+        if runtime_settings.is_restart_requested():
+            send_message("🔄 <b>Restart in progress…</b>")
+            _release_lock()
+            perform_restart()
+            return
+
         if not _acquire_lock():
             log.warning("Lock contention; skipping this loop iteration.")
             time.sleep(LOOP_SLEEP_SECONDS)
@@ -353,7 +371,13 @@ def run_forever() -> None:
         _loop_count += 1
         rm.tick()
 
-        for symbol in SYMBOLS:
+        # Honor a Telegram /stop request: keep the loop alive for callbacks
+        # but skip scanning until /resume.
+        if runtime_settings.is_stopped():
+            time.sleep(LOOP_SLEEP_SECONDS)
+            continue
+
+        for symbol in runtime_settings.get_symbols():
             try:
                 process_symbol(symbol)
             except Exception as e:  # noqa: BLE001

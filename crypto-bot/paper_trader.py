@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from config import ACCOUNT_EQUITY, RISK_PER_TRADE
+import runtime_settings
 from logger_setup import get_logger
 from supabase_client import (
     insert_trade,
@@ -34,7 +35,8 @@ def _position_size(entry: float, stop: float, weight: float = 1.0) -> float:
     stop_distance = abs(entry - stop)
     if stop_distance <= 0:
         return 0.0
-    risk_amount = ACCOUNT_EQUITY * RISK_PER_TRADE * max(0.0, min(1.0, weight))
+    risk_pct = runtime_settings.get_risk_per_trade_fraction()
+    risk_amount = ACCOUNT_EQUITY * risk_pct * max(0.0, min(1.0, weight))
     return risk_amount / stop_distance
 
 
@@ -76,7 +78,7 @@ def open_trade(
     tp = float(signal["take_profit"])
     size = _position_size(entry, stop, weight=pair_weight)
     notional_at_entry = size * entry
-    risked_usd = ACCOUNT_EQUITY * RISK_PER_TRADE * pair_weight
+    risked_usd = ACCOUNT_EQUITY * runtime_settings.get_risk_per_trade_fraction() * pair_weight
 
     notes_payload: Dict[str, Any] = {
         k: signal.get(k)

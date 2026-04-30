@@ -1,0 +1,17 @@
+{
+  "daily_pnl_usd": 0.0,
+  "daily_reset_date": "2026-04-30",
+  "consecutive_losses": 1,
+  "halt_signals": false,
+  "halt_reason": "",
+  "halt_started_at": "",
+  "pair_loss_history": {
+    "ETH/USDT": [
+      "2026-04-30T09:17:50.789884+00:00"
+    ]
+  },
+  "pair_cooldowns": {},
+  "pair_blocks": {},
+  "running_equity": 10000.0,
+  "lifetime_realised_pnl_usd": 0.0
+}

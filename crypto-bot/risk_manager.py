@@ -33,6 +33,7 @@ from config import (
     QUIET_END_UTC,
     ACCOUNT_EQUITY,
 )
+import runtime_settings
 from logger_setup import get_logger
 from supabase_client import get_all_bot_state, set_bot_state_bulk, is_connected
 
@@ -236,8 +237,9 @@ class RiskManager:
             self._maybe_auto_resume()
             if self.state.get("halt_signals"):
                 return True, f"halted ({self.state.get('halt_reason', 'unknown')})"
-            if open_trades >= MAX_OPEN_TRADES:
-                return True, f"max open trades ({MAX_OPEN_TRADES}) reached"
+            max_open = runtime_settings.get_max_open_trades()
+            if open_trades >= max_open:
+                return True, f"max open trades ({max_open}) reached"
             if in_quiet_hours():
                 return True, "quiet hours (21:00–01:00 UTC)"
             blocks = self.state.get("pair_blocks", {}) or {}
@@ -312,7 +314,7 @@ class RiskManager:
             else:
                 self.state["consecutive_losses"] = 0
 
-            cap_usd = DAILY_LOSS_CAP * DAILY_STARTING_EQUITY
+            cap_usd = runtime_settings.get_daily_loss_cap_fraction() * DAILY_STARTING_EQUITY
             if (
                 not self.state.get("halt_signals")
                 and self.state.get("daily_pnl_usd", 0.0) <= cap_usd
