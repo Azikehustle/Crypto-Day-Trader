@@ -1,0 +1,9 @@
+ccxt>=4.5.51
+matplotlib>=3.8.0
+mplfinance>=0.12.10b0
+numpy>=2.0
+pandas>=2.0
+python-dotenv>=1.0
+python-telegram-bot>=22.0
+requests>=2.31
+supabase>=2.0.0

@@ -12,4 +12,5 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-telegram-bot>=22.7",
     "requests>=2.33.1",
+    "supabase>=2.0.0",
 ]
