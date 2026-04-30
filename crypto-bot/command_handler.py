@@ -13,7 +13,7 @@ import requests
 
 from config import TELEGRAM_BOT_TOKEN, SYMBOLS, EXCHANGE
 from logger_setup import get_logger
-from telegram_bot import send_message
+from telegram_bot import send_message, should_listen
 from paper_trader import daily_summary, performance_window
 from supabase_client import get_open_trades
 from risk_manager import get_risk_manager, in_quiet_hours
@@ -269,7 +269,13 @@ def _poll_loop() -> None:
             time.sleep(5)
 
 
-def start_in_background() -> threading.Thread:
+def start_in_background() -> threading.Thread | None:
+    if not should_listen():
+        log.info(
+            "Telegram command listener disabled by TELEGRAM_LISTEN=0; "
+            "signal sending remains active."
+        )
+        return None
     t = threading.Thread(target=_poll_loop, name="telegram-commands", daemon=True)
     t.start()
     return t

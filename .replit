@@ -50,3 +50,8 @@ externalPort = 80
 [nix]
 channel = "stable-25_05"
 packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "pkg-config", "qhull", "tcl", "tk"]
+
+[userenv]
+
+[userenv.shared]
+TELEGRAM_LISTEN = "0"

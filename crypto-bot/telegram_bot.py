@@ -14,6 +14,18 @@ def _api_url(method: str) -> str:
     return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
 
 
+def should_listen() -> bool:
+    """Whether this instance should poll Telegram for incoming /commands.
+
+    Controlled by the TELEGRAM_LISTEN env var. Default is 1 (listen) so
+    behaviour is unchanged for single-instance setups. Set TELEGRAM_LISTEN=0
+    on a secondary/dev instance to keep signal sending active while
+    avoiding 409 Conflict errors from concurrent getUpdates polling.
+    """
+    raw = os.getenv("TELEGRAM_LISTEN", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off", "")
+
+
 def _credentials_ok(chat_id: Optional[str] = None) -> bool:
     if not TELEGRAM_BOT_TOKEN or not (chat_id or TELEGRAM_CHAT_ID):
         log.warning("Telegram credentials missing; skipping send.")
