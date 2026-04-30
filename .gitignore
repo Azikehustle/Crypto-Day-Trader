@@ -47,3 +47,20 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Secrets / environment files — never commit these
+.env
+.env.*
+!.env.example
+*.env
+.envrc
+secrets.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Bot runtime data
+crypto-bot/data/bot.lock
+crypto-bot/data/bot.log

@@ -35,8 +35,25 @@ SKIP_DIRS = {
     "attached_assets",
 }
 SKIP_SUFFIXES = {".pyc", ".pyo", ".tsbuildinfo", ".log"}
-SKIP_FILES = {".DS_Store", "Thumbs.db", "connect.lock", "libpeerconnection.log"}
+SKIP_FILES = {
+    ".DS_Store", "Thumbs.db", "connect.lock", "libpeerconnection.log",
+    ".env", ".env.local", ".env.development", ".env.production",
+    ".env.staged", ".envrc", "secrets.json", "credentials.json",
+}
 MAX_FILE_BYTES = 50 * 1024 * 1024
+
+
+def _is_sensitive(name: str) -> bool:
+    """Match dotenv-style files like .env, .env.*, *.env, and *.pem/*.key."""
+    if name in SKIP_FILES:
+        return True
+    if name.startswith(".env"):
+        return True
+    if name.endswith(".env"):
+        return True
+    if name.endswith((".pem", ".key", ".p12", ".pfx")):
+        return True
+    return False
 
 
 def _gather_files() -> list[Path]:
@@ -44,7 +61,7 @@ def _gather_files() -> list[Path]:
     for root, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for f in files:
-            if f in SKIP_FILES:
+            if _is_sensitive(f):
                 continue
             if any(f.endswith(s) for s in SKIP_SUFFIXES):
                 continue
