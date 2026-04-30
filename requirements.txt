@@ -7,3 +7,12 @@ python-dotenv>=1.0
 python-telegram-bot>=22.0
 requests>=2.31
 supabase>=2.0.0
+ccxt
+matplotlib
+mplfinance
+numpy
+pandas
+python-dotenv
+python-telegram-bot
+requests
+supabase

@@ -49,4 +49,4 @@ externalPort = 80
 
 [nix]
 channel = "stable-25_05"
-packages = ["glibcLocales"]
+packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "pkg-config", "qhull", "tcl", "tk"]
