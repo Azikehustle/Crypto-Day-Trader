@@ -32,3 +32,10 @@ outputType = "console"
 [deployment]
 deploymentTarget = "vm"
 run = ["python", "crypto-bot/main.py"]
+
+[userenv]
+
+[userenv.shared]
+EXCHANGE = "kucoin"
+SYMBOLS = "EUR/USD,GBP/USD,USD/JPY,AUD/USD,USD/CAD,EUR/GBP"
+TELEGRAM_LISTEN = "0"

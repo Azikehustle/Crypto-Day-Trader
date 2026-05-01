@@ -1,12 +1,16 @@
 """Central configuration for the crypto day trading bot."""
 import os
+from dotenv import load_dotenv
+
+# Load .env file (works locally and on Alwaysdata; Replit secrets take priority)
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=False)
 
 EXCHANGE = os.getenv("EXCHANGE", "kucoin")
 EXCHANGE_FALLBACKS = [
     s.strip() for s in os.getenv("EXCHANGE_FALLBACKS", "okx,bybit").split(",") if s.strip()
 ]
 SYMBOLS = [s.strip() for s in os.getenv(
-    "SYMBOLS", "BTC/USDT,ETH/USDT,SOL/USDT"
+    "SYMBOLS", "EUR/USD,GBP/USD,USD/JPY,AUD/USD,USD/CAD,EUR/GBP"
 ).split(",") if s.strip()]
 
 HTF_TIMEFRAME = "4h"
