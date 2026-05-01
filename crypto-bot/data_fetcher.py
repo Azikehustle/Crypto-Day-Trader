@@ -393,7 +393,7 @@ def fetch_ohlcv(
     if TWELVEDATA_API_KEY:
         interval = _td_interval(timeframe)
         if interval:
-            df = _fetch_td_single(symbol, timeframe, limit)
+            df = _fetch_td_single(symbol, interval, limit)   # pass mapped interval, not raw timeframe
             if df is not None and not df.is_empty():
                 _store_cache(symbol, timeframe, df)
                 return df
@@ -419,11 +419,15 @@ def fetch_ohlcv(
             return df
         log.warning("iTick failed for %s %s — trying CCXT", symbol, timeframe)
 
-    # 5. CCXT (last resort, crypto symbols only in practice)
-    df = _fetch_ccxt(symbol, timeframe, limit, exchange_name)
-    if df is not None and not df.is_empty():
-        _store_cache(symbol, timeframe, df)
-        return df
+    # 5. CCXT (last resort — skip forex pairs; crypto exchanges don't carry EUR/USD etc.)
+    _is_forex = "/" in symbol and not any(
+        c in symbol.upper() for c in ("BTC", "ETH", "USDT", "BNB", "SOL", "XRP", "ADA")
+    )
+    if not _is_forex:
+        df = _fetch_ccxt(symbol, timeframe, limit, exchange_name)
+        if df is not None and not df.is_empty():
+            _store_cache(symbol, timeframe, df)
+            return df
 
     # 6. Stale cache
     if use_cache_on_failure:

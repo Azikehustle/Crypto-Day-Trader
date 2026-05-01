@@ -61,6 +61,15 @@ _weekly_restarted_this_week = False
 # File lock
 # ---------------------------------------------------------------------------
 
+def _pid_alive(pid: int) -> bool:
+    """Return True if a process with *pid* exists in this OS."""
+    try:
+        os.kill(pid, 0)   # signal 0 = existence check only
+        return True
+    except OSError:
+        return False
+
+
 def _acquire_lock() -> bool:
     try:
         if os.path.exists(LOCK_FILE):
@@ -68,12 +77,16 @@ def _acquire_lock() -> bool:
                 age = time.time() - os.path.getmtime(LOCK_FILE)
             except OSError:
                 age = LOCK_STALE_SECONDS + 1
-            if age < LOCK_STALE_SECONDS:
-                with open(LOCK_FILE) as f:
-                    other = f.read().strip()
-                if other and other != str(os.getpid()):
-                    log.warning("Another instance holds lock (pid=%s, age=%.0fs).", other, age)
+            with open(LOCK_FILE) as f:
+                other = f.read().strip()
+            other_pid = int(other) if other and other.isdigit() else None
+            # Lock is active only if: within stale window AND the PID is alive
+            if age < LOCK_STALE_SECONDS and other_pid and other_pid != os.getpid():
+                if _pid_alive(other_pid):
+                    log.warning("Another instance holds lock (pid=%s, age=%.0fs).", other_pid, age)
                     return False
+                # PID gone — stale lock; fall through and overwrite
+                log.info("Stale lock for dead pid=%s — overwriting.", other_pid)
         _refresh_lock()
         return True
     except Exception as e:  # noqa: BLE001
