@@ -39,4 +39,30 @@ signals to Telegram and paper-trades them in `crypto-bot/data/trades.json`.
 - Default symbols: `BTC/USDT, ETH/USDT, SOL/USDT` (override via `SYMBOLS`).
 - Required secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 - Modules: `config`, `logger_setup`, `data_fetcher`, `zone_detector`,
-  `signal_engine`, `telegram_bot`, `paper_trader`, `main`, `backtest`.
+  `signal_engine`, `telegram_bot`, `paper_trader`, `main`, `backtest`,
+  `command_handler`, `runtime_settings`, `risk_manager`, `github_sync`.
+
+## Telegram UI (BotFather-style)
+- `telegram_bot.set_my_commands()` registers all 15 commands with the
+  BotFather native menu on every startup.
+- `command_handler.py` renders inline keyboards instead of plain text. Each
+  button taps a `callback_data` like `nav:status`, `cfg:max_trades:+`, or
+  `confirm:stop`. `editMessageText` updates the message in place.
+- Dangerous actions (Stop, Restart, Remove Pair, Clear Halts) always go
+  through a confirmation screen.
+- `runtime_settings.py` holds live-tunable overrides for `MAX_OPEN_TRADES`,
+  `DAILY_LOSS_CAP`, `RISK_PER_TRADE`, and the `SYMBOLS` list. Overrides are
+  persisted to Supabase `bot_state` under key `runtime_settings`. The main
+  loop reads `runtime_settings.get_symbols()` so pair changes take effect on
+  the next iteration. Stop/restart flags are honored at the top of the loop.
+
+## Two-instance topology
+- Replit dev instance has `TELEGRAM_LISTEN=0` — sends signal alerts but does
+  not poll for `/commands`.
+- Alwaysdata production (`screen -S bot`) has `TELEGRAM_LISTEN=1` and is the
+  sole responder to user commands. Avoids 409 conflicts on `getUpdates`.
+- Deploy to Alwaysdata: SCP the changed files into
+  `/home/cryptobot/Crypto-Day-Trader/crypto-bot/` (the remote copy is **not**
+  a git repo), then `screen -S bot -X quit && screen -dmS bot bash -lc "cd
+  ~/Crypto-Day-Trader/crypto-bot && set -a && source ~/Crypto-Day-Trader/.env
+  && set +a && python3 main.py 2>&1 | tee -a data/screen.log"`.
