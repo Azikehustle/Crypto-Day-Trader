@@ -228,7 +228,7 @@ def send_heartbeat(state: Dict[str, Any]) -> bool:
     """Heartbeat ping with concise live state."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     text = (
-        "🟢 <b>Bot Alive</b>\n"
+        "🟢 <b>Oracle_v5 Alive</b>\n"
         f"{ts}\n"
         f"Loop: {state.get('loop_count', 0)}\n"
         f"Signals today: {state.get('signals_today', 0)}\n"
@@ -242,9 +242,9 @@ def send_heartbeat(state: Dict[str, Any]) -> bool:
 
 def send_crash_alert(error_msg: str) -> bool:
     return send_message(
-        f"🚨 <b>CRASH</b>: <code>{(error_msg or '')[:500]}</code>\nCheck logs."
+        f"🚨 <b>Oracle_v5 CRASH</b>: <code>{(error_msg or '')[:500]}</code>\nCheck logs."
     )
 
 
 def send_risk_alert(message: str) -> bool:
-    return send_message(f"<b>Risk event</b>\n{message}")
+    return send_message(f"<b>Oracle_v5 Risk Event</b>\n{message}")

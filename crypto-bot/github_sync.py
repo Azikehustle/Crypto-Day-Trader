@@ -175,7 +175,7 @@ def _loop(token: str, full_repo: str, interval_sec: int) -> None:
     )
     while True:
         try:
-            sha = _push_once(token, full_repo, "Auto-sync from Replit bot")
+            sha = _push_once(token, full_repo, "Oracle_v5 auto-sync from Replit")
             if sha:
                 log.info("github_sync: pushed %s", sha[:7])
         except Exception as e:  # noqa: BLE001

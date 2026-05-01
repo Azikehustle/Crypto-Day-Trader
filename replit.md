@@ -26,17 +26,29 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
 
-## Crypto Trading Bot (`crypto-bot/`)
+## Oracle_v5 (`crypto-bot/`)
 
-Standalone Python signal bot (HTF bias → S/D zone → liquidity sweep → MSS →
-displacement → confirmation → entry → liquidity-target TP). Sends scored
-signals to Telegram and paper-trades them in `crypto-bot/data/trades.json`.
+Forex/crypto day-trading signal bot. Pipeline: HTF bias → S/D zone →
+liquidity sweep → MSS → displacement → confirmation → entry → TP.
+Sends Telegram signals, paper-trades via Supabase, and optionally live-trades
+through MetaAPI (MT5).
 
-- Run: `python crypto-bot/main.py` (managed by the `Crypto Bot` workflow)
-- Backtest: `python crypto-bot/backtest.py BTC/USDT 2024-01-01 2024-04-01`
-- Default exchange: KuCoin (Binance/Bybit are geo-blocked from this region).
-  Override with `EXCHANGE` env var; fallbacks via `EXCHANGE_FALLBACKS`.
-- Default symbols: `BTC/USDT, ETH/USDT, SOL/USDT` (override via `SYMBOLS`).
-- Required secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-- Modules: `config`, `logger_setup`, `data_fetcher`, `zone_detector`,
-  `signal_engine`, `telegram_bot`, `paper_trader`, `main`, `backtest`.
+- **Workflow**: `Oracle_v5` (`cd crypto-bot && python main.py`)
+- **Symbols** (env `SYMBOLS`): `EUR/USD,GBP/USD,USD/JPY,AUD/USD,USD/CAD,EUR/GBP`
+- **Data** (env `EXCHANGE`): Twelvedata → FCS → iTick triple-fallback for forex
+- **Trading mode** (env `TRADING_MODE`): `paper` (default) or `live` (MetaAPI)
+- **Required secrets**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SUPABASE_URL`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `TWELVEDATA_API_KEY`, `FINNHUB_API_KEY`
+- **Optional secrets**: `METAAPI_TOKEN`, `METAAPI_ACCOUNT_ID` (live trading)
+
+### Core modules
+`config`, `logger_setup`, `data_fetcher`, `zone_detector`, `signal_engine`,
+`telegram_bot`, `command_handler`, `paper_trader`, `supabase_client`,
+`risk_manager`, `main`, `backtest`
+
+### Phase 3-4 modules
+- `trailing_stop.py` — R-multiple trailing stop engine
+- `timeframe_manager.py` — SCALP / DAY / SWING mode selector
+- `broker.py` — AbstractBroker → PaperBroker / MetaApiBroker
+- `metaapi_client.py` — MetaAPI Cloud SDK wrapper (live MT5 orders + WS sync)
+- `news_shield.py` — Finnhub economic calendar halt filter

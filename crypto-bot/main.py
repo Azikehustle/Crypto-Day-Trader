@@ -337,7 +337,7 @@ def run_forever() -> None:
     start_command_listener()
     start_github_sync()
     send_message(
-        "🤖 <b>Crypto bot online</b>\n"
+        "🤖 <b>Oracle_v5 online</b>\n"
         f"Exchange: {EXCHANGE}\n"
         f"Symbols: {', '.join(active_symbols)}\n"
         f"HTF: {HTF_TIMEFRAME} | Entry: {ENTRY_TIMEFRAME}\n"
@@ -358,7 +358,7 @@ def run_forever() -> None:
     while True:
         # Honor a Telegram /restart request (in-place exec, screen survives)
         if runtime_settings.is_restart_requested():
-            send_message("🔄 <b>Restart in progress…</b>")
+            send_message("🔄 <b>Oracle_v5 Restart in progress…</b>")
             _release_lock()
             perform_restart()
             return

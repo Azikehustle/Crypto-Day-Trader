@@ -16,10 +16,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Crypto Bot"
+args = "Oracle_v5"
 
 [[workflows.workflow]]
-name = "Crypto Bot"
+name = "Oracle_v5"
 author = "agent"
 
 [[workflows.workflow.tasks]]

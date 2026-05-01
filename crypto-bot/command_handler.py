@@ -133,7 +133,7 @@ LEGEND = (
 
 def _screen_home() -> Tuple[str, Dict[str, Any]]:
     text = (
-        "🤖 <b>Crypto Bot Control Centre</b>\n"
+        "🤖 <b>Oracle_v5 Control Centre</b>\n"
         f"Exchange: <code>{EXCHANGE}</code> · "
         f"HTF: {HTF_TIMEFRAME} · Entry: {ENTRY_TIMEFRAME}\n"
         f"Score threshold: {SCORE_THRESHOLD_SEND}/{SCORE_MAX}\n\n"
@@ -157,7 +157,7 @@ def _screen_status() -> Tuple[str, Dict[str, Any]]:
     rs = get_risk_manager().status_dict()
     stopped = runtime_settings.is_stopped()
 
-    lines = ["📡 <b>Bot Status</b>"]
+    lines = ["📡 <b>Oracle_v5 Status</b>"]
     lines.append(f"Exchange: <code>{EXCHANGE}</code>")
     lines.append(f"Last loop: <code>{snap['last_loop_at'] or 'pending'}</code>")
     lines.append(f"Quiet hours: {'YES' if in_quiet_hours() else 'no'}")
@@ -385,9 +385,9 @@ def _screen_backtest() -> Tuple[str, Dict[str, Any]]:
 
 def _screen_help() -> Tuple[str, Dict[str, Any]]:
     text = (
-        "🆘 <b>Commands</b>\n"
-        "/start — main menu\n"
-        "/status — bot status, HTF bias, open trades\n"
+        "🆘 <b>Oracle_v5 Command Handbook</b>\n\n"
+        "/start — main control menu\n"
+        "/status — Oracle_v5 status, HTF bias, open trades\n"
         "/performance — win rate over different windows\n"
         "/equity — equity, daily P&amp;L, halt status\n"
         "/zones — active supply / demand zones\n"
@@ -399,7 +399,7 @@ def _screen_help() -> Tuple[str, Dict[str, Any]]:
         "/chart — render a chart for a symbol\n"
         "/backtest — instructions for historical backtests\n"
         "/stop — 🔴 pause new trade scanning\n"
-        "/restart — 🔴 restart the bot process"
+        "/restart — 🔴 restart Oracle_v5"
         + LEGEND
     )
     return text, _kb([BACK_ROW])
@@ -411,8 +411,8 @@ def _screen_help() -> Tuple[str, Dict[str, Any]]:
 
 def _confirm_stop() -> Tuple[str, Dict[str, Any]]:
     text = (
-        "🔴 <b>STOP BOT</b>\n\n"
-        "⚠️ Bot will stop scanning for new signals.\n"
+        "🔴 <b>STOP Oracle_v5</b>\n\n"
+        "⚠️ Oracle_v5 will stop scanning for new signals.\n"
         "Open trades remain in the database but become <b>unmanaged</b> "
         "until scanning resumes.\n\n"
         "Are you sure?"
@@ -434,8 +434,8 @@ def _confirm_resume() -> Tuple[str, Dict[str, Any]]:
 
 def _confirm_restart() -> Tuple[str, Dict[str, Any]]:
     text = (
-        "🔴 <b>RESTART BOT</b>\n\n"
-        "⚠️ Brief downtime (~15 seconds). The bot will pull the latest code "
+        "🔴 <b>RESTART Oracle_v5</b>\n\n"
+        "⚠️ Brief downtime (~15 seconds). Oracle_v5 will pull the latest code "
         "from GitHub and restart in place.\n"
         "Open trades are preserved in the database.\n\n"
         "Are you sure?"
@@ -478,7 +478,7 @@ def _do_stop() -> Tuple[str, Dict[str, Any]]:
     runtime_settings.request_stop(True)
     log.warning("Telegram: stop requested.")
     text = (
-        "🛑 <b>Bot stopped</b>\n"
+        "🛑 <b>Oracle_v5 stopped</b>\n"
         "Scanning paused. Use <i>Resume Scanning</i> in /status to re-enable."
     )
     return text, _kb([
@@ -497,7 +497,7 @@ def _do_restart() -> Tuple[str, Dict[str, Any]]:
     runtime_settings.request_restart(True)
     log.warning("Telegram: restart requested.")
     text = (
-        "🔄 <b>Restarting…</b>\n"
+        "🔄 <b>Oracle_v5 Restarting…</b>\n"
         "Pulling latest code from GitHub and restarting.\n"
         "Send /status in ~20 seconds to confirm."
     )
